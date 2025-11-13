@@ -1,27 +1,25 @@
-import json, datetime
-from sentence_transformers import SentenceTransformer
-from chromadb import Client, Settings
-from transformers import pipeline
+# memory_core.py – خفيف (لا يستخدم transformers)
+import json, datetime, diskcache as dc
 
-model = SentenceTransformer("aubmindlab/bert-base-arabertv02")
-chroma_client = Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory="chroma_data"))
-collection = chroma_client.get_or_create_collection("biz_memory")
-chat_memory = {}
+# ذاكرة ملفية خفيفة (حجم كامل < 5 ميجا)
+cache = dc.Cache("light_memory", size_limit=50 * 1024 * 1024)   # 50 ميجا كحد أقصى
 
 def save_chat(user_id, question, answer):
-    chat_memory[user_id] = chat_memory.get(user_id, []) + [{"q": question, "a": answer, "t": str(datetime.datetime.utcnow())}]
-    vector = model.encode(question).tolist()
-    collection.add(embeddings=[vector], documents=[json.dumps({"q": question, "a": answer}, ensure_ascii=False)], metadatas=[{"user": user_id, "t": str(datetime.datetime.utcnow())}], ids=[f"{user_id}_{len(chat_memory[user_id])}"])
+    key = f"{user_id}_{datetime.datetime.utcnow().isoformat()}"
+    cache[key] = {"q": question, "a": answer, "t": str(datetime.datetime.utcnow())}
 
 def get_chat_history(user_id, last=3):
-    return chat_memory.get(user_id, [])[-last:]
+    keys = [k for k in cache if k.startswith(user_id)]
+    keys.sort(reverse=True)
+    return [cache[k] for k in keys[:last]]
 
 def search_knowledge(query, top_k=1):
-    vector = model.encode(query).tolist()
-    docs = collection.query(query_embeddings=[vector], n_results=top_k)
-    if docs["documents"]:
-        return json.loads(docs["documents"][0][0])["a"]
-    return None
+    # بحث بسيط بالكلمات المفتاحية (خفيف وسريع)
+    results = []
+    for k in cache:
+        if query in cache[k]["q"] or query in cache[k]["a"]:
+            results.append(cache[k]["a"])
+    return results[0] if results else None
 
 def reply_sci(user_id, question):
     history = get_chat_history(user_id)
@@ -29,9 +27,14 @@ def reply_sci(user_id, question):
     ans = search_knowledge(question)
     if ans:
         return f"بناءً على سابقتك:\n{ans}"
-    generator = pipeline("text2text-generation", model="aubmindlab/bert-base-arabertv02")
-    prompt = f"سؤال محاسبي/إداري: {question}\nالسياق: {context}\nالإجابة العلمية المفصلة:"
-    output = generator(prompt, max_length=250, do_sample=False)[0]["generated_text"]
+    # إذا لم يوجد → نرجع لـ GPT (مُسبقاً مربوط)
+    import openai
+    openai.api_key = __import__("db").get("openai_key")
+    res = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": f"سؤال محاسبي/إداري: {question}\nالسياق: {context}"}]
+    )
+    output = res["choices"][0]["message"]["content"]
     save_chat(user_id, question, output)
     return output
 
