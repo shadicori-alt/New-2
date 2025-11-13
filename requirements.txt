@@ -7,7 +7,7 @@ google-auth-httplib2==0.1.0
 python-dotenv==1.0.0
 openai==0.28.1
 gunicorn==21.2.0
-# ===== المكتبات الجديدة (ذاكرة مشتركة + نموذج عربي متخصص) =====
-transformers==4.40.0
-sentence-transformers==2.2.2
-chromadb==0.4.22
+# ===== خفيفة لكن فعالة =====
+joblib==1.3.2               # ذاكرة مؤقتة سريعة
+diskcache==5.6.3            # قاعدة بيانات ملفية خفيفة
+sentence-piece==0.1.99      # فقط الضروري للنموذج العربي الصغير
